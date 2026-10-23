@@ -5,6 +5,9 @@ import Dashboard     from '@/pages/Dashboard';
 import SalesReport   from '@/pages/SalesReport';
 import CustomerList  from '@/pages/CustomerList';
 import ProductCatalog from '@/pages/ProductCatalog';
+import Finance        from '@/pages/Finance';
+import MockBanner     from '@/components/MockBanner';
+import { USE_MOCK }   from '@/services/mockConfig';
 
 // Placeholder pages
 function Analytics() {
@@ -37,27 +40,34 @@ function Settings() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <div className="flex">
-        {/* Fixed Sidebar */}
-        <Sidebar />
+    <>
+      {/* Banner tetap visible di atas segalanya saat mock mode aktif */}
+      <MockBanner />
 
-        {/* Main area */}
-        <div className="main-content flex-1">
-          {/* Fixed top navbar */}
-          <Navbar />
+      <BrowserRouter>
+        <div className="flex" style={USE_MOCK ? { paddingTop: '33px' } : undefined}>
+          {/* Fixed Sidebar */}
+          <Sidebar />
 
-          {/* Page routes */}
-          <Routes>
-            <Route path="/"          element={<Dashboard />}     />
-            <Route path="/sales"     element={<SalesReport />}   />
-            <Route path="/customers" element={<CustomerList />}  />
-            <Route path="/products"  element={<ProductCatalog />}/>
-            <Route path="/analytics" element={<Analytics />}     />
-            <Route path="/settings"  element={<Settings />}      />
-          </Routes>
+          {/* Main area */}
+          <div className="main-content flex-1">
+            {/* Fixed top navbar */}
+            <Navbar />
+
+            {/* Page routes */}
+            <Routes>
+              <Route path="/"          element={<Dashboard />}     />
+              <Route path="/dashboard" element={<Dashboard />}     />
+              <Route path="/sales"     element={<SalesReport />}   />
+              <Route path="/customers" element={<CustomerList />}  />
+              <Route path="/products"  element={<ProductCatalog />}/>
+              <Route path="/finance"   element={<Finance />}        />
+              <Route path="/analytics" element={<Analytics />}     />
+              <Route path="/settings"  element={<Settings />}      />
+            </Routes>
+          </div>
         </div>
-      </div>
-    </BrowserRouter>
+      </BrowserRouter>
+    </>
   );
 }

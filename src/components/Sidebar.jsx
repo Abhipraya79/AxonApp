@@ -4,6 +4,7 @@ import {
   TrendingUp,
   Users,
   Package,
+  DollarSign,
   BarChart3,
   Settings,
   ChevronRight,
@@ -18,6 +19,7 @@ const navItems = [
       { to: '/sales',          icon: TrendingUp,      label: 'Sales Report'     },
       { to: '/customers',      icon: Users,           label: 'Customers'        },
       { to: '/products',       icon: Package,         label: 'Product Catalog'  },
+      { to: '/finance',        icon: DollarSign,      label: 'Finance & Cash'   },
     ],
   },
   {

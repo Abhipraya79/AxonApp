@@ -1,56 +1,19 @@
+import { useState, useEffect, useCallback } from 'react';
 import {
-  DollarSign, ShoppingCart, Users, Package,
-  TrendingUp, Clock, CheckCircle2, AlertCircle,
+  DollarSign, Users,
+  TrendingUp, RefreshCw, Briefcase,
 } from 'lucide-react';
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  AreaChart, Area, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { StatCard, Card } from '@/components/Card';
-import ChartContainer, { CHART_COLORS, chartTheme } from '@/components/ChartContainer';
-import { formatCurrency } from '@/utils/formatters';
-
-// ── Mock data (replace with API calls when backend is ready) ──────────────
-const revenueData = [
-  { month: 'Jan', revenue: 224000, orders: 38 },
-  { month: 'Feb', revenue: 189000, orders: 31 },
-  { month: 'Mar', revenue: 312000, orders: 54 },
-  { month: 'Apr', revenue: 278000, orders: 47 },
-  { month: 'May', revenue: 345000, orders: 62 },
-  { month: 'Jun', revenue: 398000, orders: 71 },
-  { month: 'Jul', revenue: 421000, orders: 78 },
-  { month: 'Aug', revenue: 367000, orders: 65 },
-  { month: 'Sep', revenue: 452000, orders: 83 },
-  { month: 'Oct', revenue: 489000, orders: 91 },
-  { month: 'Nov', revenue: 531000, orders: 97 },
-  { month: 'Dec', revenue: 612000, orders: 112 },
-];
-
-const productLineData = [
-  { name: 'Classic Cars',    value: 38.5, color: CHART_COLORS.blue    },
-  { name: 'Vintage Cars',    value: 21.2, color: CHART_COLORS.violet  },
-  { name: 'Motorcycles',     value: 14.8, color: CHART_COLORS.emerald },
-  { name: 'Trucks & Buses',  value: 11.3, color: CHART_COLORS.amber   },
-  { name: 'Planes',          value:  8.7, color: CHART_COLORS.cyan    },
-  { name: 'Ships',           value:  5.5, color: CHART_COLORS.rose    },
-];
-
-const topProducts = [
-  { name: '1992 Ferrari 360 Spider red', sold: 1808, revenue: 276839 },
-  { name: '2001 Ferrari Enzo',           sold: 1645, revenue: 190755 },
-  { name: '1952 Alpine Renault 1300',    sold: 1384, revenue: 190017 },
-  { name: '2003 Harley-Davidson Eagle',  sold: 1382, revenue: 170686 },
-  { name: '1968 Dodge Charger',          sold: 1310, revenue: 160194 },
-];
-
-const orderStatusData = [
-  { name: 'Shipped',   count: 303, color: CHART_COLORS.emerald },
-  { name: 'Resolved',  count:  47, color: CHART_COLORS.blue    },
-  { name: 'Cancelled', count:  16, color: CHART_COLORS.rose    },
-  { name: 'On Hold',   count:  14, color: CHART_COLORS.amber   },
-  { name: 'Disputed',  count:  14, color: CHART_COLORS.violet  },
-  { name: 'In Process',count:  17, color: CHART_COLORS.cyan    },
-];
+import { StatCard } from '@/components/Card';
+import ChartContainer, { CHART_COLORS, CHART_COLORS_ARRAY, chartTheme } from '@/components/ChartContainer';
+import { SkeletonStatCard, SkeletonChart } from '@/components/Skeleton';
+import ErrorAlert from '@/components/ErrorAlert';
+import EmptyState from '@/components/EmptyState';
+import { formatCurrency, formatNumber } from '@/utils/formatters';
+import { analyticsService, FALLBACK_ANALYTICS, getErrorMessage } from '@/services';
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -59,7 +22,8 @@ const CustomTooltip = ({ active, payload, label }) => {
       <p style={{ ...chartTheme.tooltip.labelStyle, marginBottom: 4 }}>{label}</p>
       {payload.map((p) => (
         <p key={p.dataKey} style={{ color: p.color, margin: 0 }}>
-          {p.name === 'revenue' ? formatCurrency(p.value, true) : p.value} {p.name !== 'revenue' && 'orders'}
+          {p.name === 'revenue' ? formatCurrency(p.value, true) : formatNumber(p.value)}{' '}
+          {p.name !== 'revenue' && p.name}
         </p>
       ))}
     </div>
@@ -67,214 +31,337 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export default function Dashboard() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [isUsingFallback, setIsUsingFallback] = useState(false);
+
+  // Data states
+  const [kpi, setKpi] = useState(null);
+  const [salesTrend, setSalesTrend] = useState([]);
+  const [customerDist, setCustomerDist] = useState([]);
+  const [selectedYear, setSelectedYear] = useState('All');
+
+  // Fetch all dashboard data from backend API
+  const loadDashboardData = useCallback(async (isRefresh = false, year = selectedYear) => {
+    if (isRefresh) {
+      setLoading(true);
+    }
+    setError(null);
+
+    try {
+      const trendParams = year !== 'All' ? { year: Number(year) } : undefined;
+
+      // Panggil endpoints analitik secara paralel via service
+      const [kpiRes, trendRes, distRes] = await Promise.allSettled([
+        analyticsService.getKpi(),
+        analyticsService.getSalesTrend(trendParams),
+        analyticsService.getCustomerDistribution(),
+      ]);
+
+      let hasAnyError = false;
+      let errorMsg = '';
+
+      // 1. KPI Data
+      if (kpiRes.status === 'fulfilled' && kpiRes.value?.data) {
+        setKpi(kpiRes.value.data);
+      } else {
+        hasAnyError = true;
+        errorMsg = getErrorMessage(kpiRes.reason);
+      }
+
+      // 2. Sales Trend Data
+      if (trendRes.status === 'fulfilled' && trendRes.value?.data) {
+        setSalesTrend(trendRes.value.data);
+      } else {
+        hasAnyError = true;
+        errorMsg = errorMsg || getErrorMessage(trendRes.reason);
+      }
+
+      // 3. Customer Distribution Data
+      if (distRes.status === 'fulfilled' && distRes.value?.data) {
+        setCustomerDist(distRes.value.data);
+      } else {
+        hasAnyError = true;
+        errorMsg = errorMsg || getErrorMessage(distRes.reason);
+      }
+
+      // Jika backend database remote mengembalikan error (misal migrasi tabel belum selesai),
+      // aktifkan data fallback agar tampilan UI tetap bisa dieksplorasi
+      if (hasAnyError) {
+        setError(errorMsg);
+        setIsUsingFallback(true);
+        setKpi(FALLBACK_ANALYTICS.kpi);
+        setSalesTrend(FALLBACK_ANALYTICS.salesTrend);
+        setCustomerDist(FALLBACK_ANALYTICS.customerDistribution);
+      } else {
+        setIsUsingFallback(false);
+      }
+    } catch (err) {
+      console.error('[Dashboard fetch error]', err);
+      setError(getErrorMessage(err));
+      setIsUsingFallback(true);
+      setKpi(FALLBACK_ANALYTICS.kpi);
+      setSalesTrend(FALLBACK_ANALYTICS.salesTrend);
+      setCustomerDist(FALLBACK_ANALYTICS.customerDistribution);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
+
   return (
     <div className="page-container">
-      {/* ── KPI Stats ────────────────────────────────── */}
+      {/* ── Dashboard Page Header with Manual Refresh ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-bold text-white tracking-tight">Executive Dashboard</h1>
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                isUsingFallback
+                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isUsingFallback ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
+                }`}
+              />
+              {isUsingFallback ? 'Offline / Preview Mode' : 'Live API Connected'}
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            Real-time business performance & sales analytics from classicmodels database
+          </p>
+        </div>
+
+        {/* Manual Refresh Button */}
+        <div className="flex items-center gap-2">
+          <button
+            id="btn-refresh-dashboard"
+            onClick={() => loadDashboardData(true)}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-750 text-slate-200 text-xs font-medium transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <RefreshCw size={13} className={loading ? 'animate-spin text-blue-400' : 'text-slate-400'} />
+            <span>{loading ? 'Refreshing...' : 'Refresh Data'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Error Banner State ────────────────────────── */}
+      {error && (
+        <ErrorAlert
+          title="Pemberitahuan Sinkronisasi API"
+          message={error}
+          onRetry={loadDashboardData}
+          onDismiss={() => setError(null)}
+          className="mb-6"
+        />
+      )}
+
+      {/* ── 1. KPI Stats Cards (GET /api/analytics/kpi) ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        <StatCard
-          title="Total Revenue"
-          value={9604190.61}
-          format="currency"
-          change={12.4}
-          icon={DollarSign}
-          accentColor="var(--accent-blue)"
-          subtext="FY 2003–2005"
-        />
-        <StatCard
-          title="Total Orders"
-          value={326}
-          format="number"
-          change={8.7}
-          icon={ShoppingCart}
-          accentColor="var(--accent-emerald)"
-          subtext="All time"
-        />
-        <StatCard
-          title="Customers"
-          value={122}
-          format="number"
-          change={-2.1}
-          icon={Users}
-          accentColor="var(--accent-amber)"
-          subtext="Active accounts"
-        />
-        <StatCard
-          title="Products"
-          value={110}
-          format="number"
-          icon={Package}
-          accentColor="#8B5CF6"
-          subtext="6 product lines"
-        />
+        {loading ? (
+          <>
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+          </>
+        ) : (
+          <>
+            <StatCard
+              title="Total Revenue"
+              value={kpi?.totalRevenue ?? 0}
+              format="currency"
+              change={kpi?.revenueGrowth ?? 12.4}
+              icon={DollarSign}
+              accentColor="var(--accent-blue)"
+              subtext="Accumulated Sales"
+            />
+            <StatCard
+              title="Total Profit"
+              value={kpi?.totalProfit ?? 0}
+              format="currency"
+              change={kpi?.orderGrowth ?? 8.7}
+              icon={TrendingUp}
+              accentColor="var(--accent-emerald)"
+              subtext="Gross Profit margin"
+            />
+            <StatCard
+              title="Total Customers"
+              value={kpi?.totalCustomers ?? 0}
+              format="number"
+              change={kpi?.customerGrowth ?? -2.1}
+              icon={Users}
+              accentColor="var(--accent-amber)"
+              subtext="Registered clients"
+            />
+            <StatCard
+              title="Total Employees"
+              value={kpi?.totalEmployees ?? 0}
+              format="number"
+              icon={Briefcase}
+              accentColor="#8B5CF6"
+              subtext="Global sales force"
+            />
+          </>
+        )}
       </div>
 
-      {/* ── Revenue Area Chart + Pie Chart ──────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
-        <ChartContainer
-          title="Monthly Revenue & Orders"
-          subtitle="Full year trend overview"
-          className="xl:col-span-2"
-          height={290}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={revenueData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradRevenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor={CHART_COLORS.blue} stopOpacity={0.25} />
-                  <stop offset="95%" stopColor={CHART_COLORS.blue} stopOpacity={0}    />
-                </linearGradient>
-              </defs>
-              <CartesianGrid {...chartTheme.grid} />
-              <XAxis dataKey="month" tick={chartTheme.axis.tick} axisLine={false} tickLine={false} />
-              <YAxis
-                yAxisId="revenue"
-                tick={chartTheme.axis.tick}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={(v) => `$${(v/1000).toFixed(0)}K`}
-              />
-              <YAxis yAxisId="orders" orientation="right" tick={chartTheme.axis.tick} axisLine={false} tickLine={false} />
-              <Tooltip content={<CustomTooltip />} />
-              <Area
-                yAxisId="revenue"
-                type="monotone"
-                dataKey="revenue"
-                name="revenue"
-                stroke={CHART_COLORS.blue}
-                strokeWidth={2}
-                fill="url(#gradRevenue)"
-                dot={false}
-                activeDot={{ r: 5, fill: CHART_COLORS.blue }}
-              />
-              <Bar
-                yAxisId="orders"
-                dataKey="orders"
-                name="orders"
-                fill={CHART_COLORS.violet}
-                fillOpacity={0.4}
-                radius={[3, 3, 0, 0]}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartContainer>
-
-        <ChartContainer title="Revenue by Product Line" height={290}>
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={productLineData}
-                cx="50%"
-                cy="48%"
-                innerRadius={60}
-                outerRadius={95}
-                paddingAngle={3}
-                dataKey="value"
-              >
-                {productLineData.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} stroke="transparent" />
+      {/* ── 2. Sales Trend & Customer Distribution Charts ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+        {/* Sales Trend Chart (GET /api/analytics/sales-trend) */}
+        {loading ? (
+          <div className="xl:col-span-2">
+            <SkeletonChart height={290} />
+          </div>
+        ) : (
+          <ChartContainer
+            title="Monthly Sales & Orders Trend"
+            subtitle="GET /api/analytics/sales-trend"
+            className="xl:col-span-2"
+            height={290}
+            action={
+              <div className="flex items-center gap-1 bg-slate-800/80 p-0.5 rounded-lg border border-slate-700/60 text-xs">
+                {['All', '2003', '2004', '2005'].map((yr) => (
+                  <button
+                    key={yr}
+                    onClick={() => {
+                      setSelectedYear(yr);
+                      loadDashboardData(false, yr);
+                    }}
+                    className={`px-2.5 py-0.5 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                      selectedYear === yr
+                        ? 'bg-blue-600 text-white font-semibold shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+                    }`}
+                  >
+                    {yr}
+                  </button>
                 ))}
-              </Pie>
-              <Tooltip
-                contentStyle={chartTheme.tooltip.contentStyle}
-                formatter={(v) => [`${v}%`, 'Share']}
-              />
-            </PieChart>
-          </ResponsiveContainer>
-          {/* Legend */}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-2">
-            {productLineData.map((item) => (
-              <div key={item.name} className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: item.color }} />
-                <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                  {item.name}
-                </span>
-                <span className="text-xs ml-auto font-mono" style={{ color: 'var(--text-secondary)' }}>
-                  {item.value}%
-                </span>
               </div>
-            ))}
-          </div>
-        </ChartContainer>
-      </div>
-
-      {/* ── Top Products + Order Status ──────────────── */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {/* Top Products Table */}
-        <Card title="Top 5 Products by Revenue">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Product</th>
-                <th className="text-right">Units</th>
-                <th className="text-right">Revenue</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topProducts.map((p, i) => (
-                <tr key={i}>
-                  <td>
-                    <span
-                      className="inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold"
-                      style={{
-                        background: i === 0 ? 'rgba(251,191,36,0.15)' : 'rgba(51,65,85,0.5)',
-                        color: i === 0 ? 'var(--accent-amber)' : 'var(--text-muted)',
-                      }}
-                    >
-                      {i + 1}
-                    </span>
-                  </td>
-                  <td className="font-medium" style={{ color: 'var(--text-primary)', maxWidth: 200 }}>
-                    <span className="block truncate" title={p.name}>{p.name}</span>
-                  </td>
-                  <td className="text-right font-mono text-xs">{p.sold.toLocaleString()}</td>
-                  <td className="text-right font-mono text-xs" style={{ color: 'var(--accent-emerald)' }}>
-                    {formatCurrency(p.revenue, true)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-
-        {/* Order Status */}
-        <Card title="Order Status Breakdown">
-          <ChartContainer height={200} className="border-0 shadow-none p-0 bg-transparent">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={orderStatusData} layout="vertical" margin={{ left: 0, right: 10 }}>
-                <CartesianGrid horizontal={false} {...chartTheme.grid} />
-                <XAxis type="number" tick={chartTheme.axis.tick} axisLine={false} tickLine={false} />
-                <YAxis dataKey="name" type="category" tick={chartTheme.axis.tick} axisLine={false} tickLine={false} width={75} />
-                <Tooltip
-                  contentStyle={chartTheme.tooltip.contentStyle}
-                  cursor={chartTheme.tooltip.cursor}
-                />
-                <Bar dataKey="count" name="Orders" radius={[0, 4, 4, 0]}>
-                  {orderStatusData.map((entry, i) => (
-                    <Cell key={i} fill={entry.color} fillOpacity={0.85} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            }
+          >
+            {salesTrend && salesTrend.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={salesTrend} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={CHART_COLORS.blue} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={CHART_COLORS.blue} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid {...chartTheme.grid} />
+                  <XAxis dataKey="month" tick={chartTheme.axis.tick} axisLine={false} tickLine={false} />
+                  <YAxis
+                    yAxisId="revenue"
+                    tick={chartTheme.axis.tick}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}K`}
+                  />
+                  <YAxis
+                    yAxisId="orders"
+                    orientation="right"
+                    tick={chartTheme.axis.tick}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Area
+                    yAxisId="revenue"
+                    type="monotone"
+                    dataKey="revenue"
+                    name="revenue"
+                    stroke={CHART_COLORS.blue}
+                    strokeWidth={2}
+                    fill="url(#gradRevenue)"
+                    dot={false}
+                    activeDot={{ r: 5, fill: CHART_COLORS.blue }}
+                  />
+                  <Bar
+                    yAxisId="orders"
+                    dataKey="orders"
+                    name="orders"
+                    fill={CHART_COLORS.violet}
+                    fillOpacity={0.4}
+                    radius={[3, 3, 0, 0]}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState title="Belum Ada Data Tren Penjualan" />
+            )}
           </ChartContainer>
+        )}
 
-          <div className="grid grid-cols-3 gap-2 mt-3">
-            {orderStatusData.map((item) => (
-              <div
-                key={item.name}
-                className="flex flex-col items-center justify-center p-2 rounded-lg text-center"
-                style={{ background: `${item.color}10` }}
-              >
-                <span className="text-lg font-bold font-mono" style={{ color: item.color }}>
-                  {item.count}
-                </span>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {item.name}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
+        {/* Customer Distribution by Country (GET /api/analytics/customer-distribution) */}
+        {loading ? (
+          <SkeletonChart height={290} />
+        ) : (
+          <ChartContainer
+            title="Customer Distribution"
+            subtitle="GET /api/analytics/customer-distribution"
+            height={290}
+          >
+            {customerDist && customerDist.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height="70%">
+                  <PieChart>
+                    <Pie
+                      data={customerDist}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={55}
+                      outerRadius={85}
+                      paddingAngle={3}
+                      dataKey={customerDist[0]?.customerCount !== undefined ? 'customerCount' : 'value'}
+                      nameKey="country"
+                    >
+                      {customerDist.map((entry, i) => (
+                        <Cell
+                          key={`cell-${i}`}
+                          fill={CHART_COLORS_ARRAY[i % CHART_COLORS_ARRAY.length]}
+                          stroke="transparent"
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={chartTheme.tooltip.contentStyle}
+                      formatter={(v, name) => [`${formatNumber(v)} customers`, name]}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+
+                {/* Country Legend */}
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-1 max-h-24 overflow-y-auto pr-1">
+                  {customerDist.slice(0, 6).map((item, i) => (
+                    <div key={item.country || i} className="flex items-center gap-1.5 text-xs">
+                      <div
+                        className="w-2 h-2 rounded-full flex-shrink-0"
+                        style={{ background: CHART_COLORS_ARRAY[i % CHART_COLORS_ARRAY.length] }}
+                      />
+                      <span className="truncate text-slate-400" title={item.country}>
+                        {item.country}
+                      </span>
+                      <span className="ml-auto font-mono text-slate-300">
+                        {item.customerCount ?? item.value ?? 0}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <EmptyState title="Tidak Ada Data Pelanggan" />
+            )}
+          </ChartContainer>
+        )}
       </div>
     </div>
   );

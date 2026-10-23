@@ -1,5 +1,6 @@
 import { useLocation } from 'react-router-dom';
 import { Bell, Search, RefreshCw } from 'lucide-react';
+import BackendHealthBadge from '@/components/BackendHealthBadge';
 
 const PAGE_TITLES = {
   '/':          { title: 'Dashboard',         subtitle: 'Overview & key metrics'           },
@@ -30,6 +31,9 @@ export default function Navbar() {
 
       {/* Right — Actions */}
       <div className="flex items-center gap-3">
+        {/* Backend API Health Status Indicator */}
+        <BackendHealthBadge />
+
         {/* Date badge */}
         <span
           className="hidden sm:block text-xs px-3 py-1 rounded-full border"
