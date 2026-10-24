@@ -1,18 +1,23 @@
 /**
- * AxonApp — Centralized Axios API Client  (Dual-Mode)
+ * AxonApp — Centralized Axios API Client  (Triple-Mode)
  * ─────────────────────────────────────────────────────────────────────
- * Mode 1 — Direct URL (default, VITE_USE_PROXY=false):
- *   Axios langsung memanggil https://axonbe.bgsprayogi.my.id/api/...
- *   → CORS harus di-allow oleh backend (sudah dikonfigurasi).
- *   → Tidak ada ETIMEDOUT dari Vite proxy karena proxy tidak dilewati.
+ * Mode 1 — Vercel Proxy (auto-detect, produksi non-localhost):
+ *   Axios memanggil /api/... → Vercel rewrites forward ke backend (server-side).
+ *   → CORS tidak pernah terblokir karena request keluar dari server Vercel.
+ *   → Aktif otomatis jika bukan localhost DAN VITE_USE_PROXY != 'true'.
  *
- * Mode 2 — Vite Proxy (VITE_USE_PROXY=true):
- *   Axios memanggil /api/... → Vite proxy forward ke backend.
- *   → Berguna jika environment tidak bisa akses direct (misal: staging server).
+ * Mode 2 — Vite Proxy (VITE_USE_PROXY=true, development):
+ *   Axios memanggil /api/... → Vite dev-server proxy forward ke backend.
+ *   → Berguna saat development jika Direct URL diblokir CORS.
+ *
+ * Mode 3 — Direct URL (VITE_USE_PROXY=false, lokal default):
+ *   Axios langsung memanggil https://axonbe.bgsprayogi.my.id/api/...
+ *   → CORS harus di-allow oleh backend.
  *
  * Toggle di .env:
- *   VITE_USE_PROXY=false   # Direct URL (recommended)
- *   VITE_USE_PROXY=true    # Via Vite proxy
+ *   VITE_USE_PROXY=false   # Direct URL (lokal, recommended)
+ *   VITE_USE_PROXY=true    # Via Vite proxy (lokal fallback)
+ *   # Di Vercel/produksi: Vercel Proxy otomatis digunakan
  */
 import axios from 'axios';
 import { USE_MOCK, MOCK_DELAY_MS, resolveMock } from './mockConfig';
@@ -22,34 +27,56 @@ const MAX_RETRIES    = 2;    // jumlah maksimum retry setelah gagal
 const RETRY_DELAY_MS = 1500; // jeda antar retry (ms)
 
 /**
- * Menentukan Base URL berdasarkan env variables.
+ * Menentukan Base URL berdasarkan env variables dan environment runtime.
  *
  * Priority:
  *  1. USE_MOCK aktif          → base URL tidak relevan (adapter override)
- *  2. VITE_USE_PROXY=true     → '/api'  (lewat Vite proxy)
- *  3. VITE_USE_PROXY=false    → VITE_API_BASE_URL + '/api'  (direct)
- *  4. Tidak ada env sama sekali → direct ke hardcoded backend URL
+ *  2. VITE_USE_PROXY=true     → '/api'  (lewat Vite proxy, lokal)
+ *  3. Bukan localhost         → '/api'  (lewat Vercel rewrites, produksi)
+ *  4. VITE_USE_PROXY=false    → VITE_API_BASE_URL + '/api'  (direct, lokal)
+ *  5. Tidak ada env sama sekali → direct ke hardcoded backend URL
  */
 function resolveBaseUrl() {
-  const useProxy = import.meta.env.VITE_USE_PROXY === 'true';
+  const useProxy  = import.meta.env.VITE_USE_PROXY === 'true';
+  const isLocalhost = typeof window !== 'undefined'
+    && (window.location.hostname === 'localhost'
+        || window.location.hostname === '127.0.0.1'
+        || window.location.hostname === '0.0.0.0');
 
+  // Mode Vite proxy (eksplisit, lokal dev)
   if (useProxy) {
-    // Mode proxy: relatif /api → Vite forward ke backend
     return '/api';
   }
 
-  // Mode direct: gunakan URL eksplisit dari env
-  const rawBase = import.meta.env.VITE_API_BASE_URL ?? 'https://axonbe.bgsprayogi.my.id';
+  // Mode Vercel/produksi: gunakan path relatif agar Vercel rewrites berlaku
+  // (server-side proxy → tidak ada CORS issue di browser)
+  if (!isLocalhost) {
+    return '/api';
+  }
+
+  // Mode direct (lokal, VITE_USE_PROXY=false)
+  const rawBase   = import.meta.env.VITE_API_BASE_URL ?? 'https://axonbe.bgsprayogi.my.id';
   const cleanBase = rawBase.replace(/\/+$/, ''); // hapus trailing slash
   return cleanBase.endsWith('/api') ? cleanBase : `${cleanBase}/api`;
 }
 
+/** True jika request dikirim via proxy (Vite dev proxy ATAU Vercel rewrites) */
+function resolveIsProxy() {
+  const useProxy  = import.meta.env.VITE_USE_PROXY === 'true';
+  const isLocalhost = typeof window !== 'undefined'
+    && (window.location.hostname === 'localhost'
+        || window.location.hostname === '127.0.0.1'
+        || window.location.hostname === '0.0.0.0');
+  return useProxy || !isLocalhost;
+}
+
 export const BASE_URL    = resolveBaseUrl();
-export const IS_PROXY    = import.meta.env.VITE_USE_PROXY === 'true';
+export const IS_PROXY    = resolveIsProxy();
+export const IS_VERCEL   = IS_PROXY && import.meta.env.VITE_USE_PROXY !== 'true';
 export const BACKEND_URL = import.meta.env.VITE_API_BASE_URL ?? 'https://axonbe.bgsprayogi.my.id';
 
 console.info(
-  `[AxonAPI] Mode: ${USE_MOCK ? '🟡 MOCK' : IS_PROXY ? '🔀 Vite Proxy' : '🟢 Direct URL'} | baseURL: ${BASE_URL}`
+  `[AxonAPI] Mode: ${USE_MOCK ? '🟡 MOCK' : IS_VERCEL ? '☁️ Vercel Proxy' : IS_PROXY ? '🔀 Vite Proxy' : '🟢 Direct URL'} | baseURL: ${BASE_URL}`
 );
 
 // ── Axios instance ────────────────────────────────────────────────────
@@ -162,9 +189,13 @@ apiClient.interceptors.response.use(
         'Server mungkin sedang sibuk — coba beberapa saat lagi.';
       _emitToast(friendlyMessage, 'warning');
     } else if (isNetworkError) {
-      friendlyMessage = IS_PROXY
-        ? 'Gagal terhubung ke backend via Vite proxy. Cek koneksi internet atau coba Direct URL mode (VITE_USE_PROXY=false).'
-        : 'Gagal terhubung langsung ke backend. Periksa koneksi internet atau CORS policy server.';
+      if (IS_VERCEL) {
+        friendlyMessage = 'Gagal terhubung ke backend via Vercel proxy. Periksa apakah backend aktif atau cek konfigurasi vercel.json.';
+      } else if (IS_PROXY) {
+        friendlyMessage = 'Gagal terhubung ke backend via Vite proxy. Cek koneksi internet atau coba Direct URL mode (VITE_USE_PROXY=false).';
+      } else {
+        friendlyMessage = 'Gagal terhubung langsung ke backend. Periksa koneksi internet atau CORS policy server.';
+      }
       _emitToast(friendlyMessage, 'error');
     } else if (statusCode === 404) {
       friendlyMessage = 'Endpoint API tidak ditemukan (404).';
@@ -205,7 +236,7 @@ export async function checkBackendHealth() {
       online: response?.status === 'UP' || response?.success === true,
       status: response?.status || 'UP',
       message: response?.message || 'Backend is reachable',
-      mode: USE_MOCK ? 'mock' : IS_PROXY ? 'proxy' : 'direct',
+      mode: USE_MOCK ? 'mock' : IS_VERCEL ? 'vercel-proxy' : IS_PROXY ? 'vite-proxy' : 'direct',
       uptime: response?.uptime ?? null,
       timestamp: response?.timestamp ?? new Date().toISOString(),
       latencyMs: latency,
@@ -216,7 +247,7 @@ export async function checkBackendHealth() {
       online: false,
       status: 'DOWN',
       message: err.message || 'Tidak dapat terhubung ke /api/health',
-      mode: USE_MOCK ? 'mock' : IS_PROXY ? 'proxy' : 'direct',
+      mode: USE_MOCK ? 'mock' : IS_VERCEL ? 'vercel-proxy' : IS_PROXY ? 'vite-proxy' : 'direct',
       uptime: null,
       timestamp: new Date().toISOString(),
       latencyMs: latency,
